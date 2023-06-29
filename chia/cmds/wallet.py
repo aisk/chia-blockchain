@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import click
 
 from chia.cmds.check_wallet_db import help_text as check_help_text
-from chia.cmds.cmds_util import execute_with_wallet
+from chia.cmds.cmds_util import execute_with_wallet, tx_config_args
 from chia.cmds.coins import coins_cmd
 from chia.cmds.plotnft import validate_fee
 from chia.wallet.transaction_sorting import SortKey
@@ -166,40 +166,13 @@ def get_transactions_cmd(
     "-o", "--override", help="Submits transaction without checking for unusual values", is_flag=True, default=False
 )
 @click.option(
-    "-ma",
-    "--min-coin-amount",
-    help="Ignore coins worth less then this much XCH or CAT units",
-    type=str,
-    required=False,
-    default="0",
-)
-@click.option(
-    "-l",
-    "--max-coin-amount",
-    help="Ignore coins worth more then this much XCH or CAT units",
-    type=str,
-    required=False,
-    default="0",
-)
-@click.option(
-    "--exclude-coin",
-    "coins_to_exclude",
-    multiple=True,
-    help="Exclude this coin from being spent.",
-)
-@click.option(
-    "--reuse",
-    help="Reuse existing address for the change.",
-    is_flag=True,
-    default=False,
-)
-@click.option(
     "--clawback_time",
     help="The seconds that the recipient needs to wait to claim the fund."
     " A positive number will enable the Clawback features.",
     type=int,
     default=0,
 )
+@tx_config_args
 def send_cmd(
     wallet_rpc_port: Optional[int],
     fingerprint: int,
@@ -209,12 +182,13 @@ def send_cmd(
     fee: str,
     address: str,
     override: bool,
-    min_coin_amount: str,
-    max_coin_amount: str,
-    coins_to_exclude: Tuple[str],
-    reuse: bool,
     clawback_time: int,
-) -> None:  # pragma: no cover
+    reuse: bool,
+    min_amount: Optional[str],
+    max_amount: Optional[str],
+    coins_to_exclude: List[str],
+    amounts_to_exclude: List[int],
+) -> None:
     extra_params = {
         "id": id,
         "amount": amount,
@@ -222,11 +196,12 @@ def send_cmd(
         "fee": fee,
         "address": address,
         "override": override,
-        "min_coin_amount": min_coin_amount,
-        "max_coin_amount": max_coin_amount,
-        "excluded_coin_ids": list(coins_to_exclude),
-        "reuse_puzhash": True if reuse else None,
         "clawback_time": clawback_time,
+        "reuse_puzhash": True if reuse else None,
+        "min_coin_amount": min_amount,
+        "max_coin_amount": max_amount,
+        "excluded_coin_ids": coins_to_exclude,
+        "excluded_amounts": amounts_to_exclude,
     }
     import asyncio
 
@@ -467,12 +442,7 @@ def add_token_cmd(wallet_rpc_port: Optional[int], asset_id: str, token_name: str
 @click.option(
     "-m", "--fee", help="A fee to add to the offer when it gets taken, in XCH", default="0", show_default=True
 )
-@click.option(
-    "--reuse",
-    help="Reuse existing address for the offer.",
-    is_flag=True,
-    default=False,
-)
+@tx_config_args
 def make_offer_cmd(
     wallet_rpc_port: Optional[int],
     fingerprint: int,
@@ -481,6 +451,10 @@ def make_offer_cmd(
     filepath: str,
     fee: str,
     reuse: bool,
+    min_amount: Optional[str],
+    max_amount: Optional[str],
+    coins_to_exclude: List[str],
+    amounts_to_exclude: List[int],
 ) -> None:
     extra_params = {
         "offers": offer,
@@ -488,6 +462,10 @@ def make_offer_cmd(
         "filepath": filepath,
         "fee": fee,
         "reuse_puzhash": True if reuse else None,
+        "min_coin_amount": min_amount,
+        "max_coin_amount": max_amount,
+        "excluded_coin_ids": coins_to_exclude,
+        "excluded_amounts": amounts_to_exclude,
     }
     import asyncio
 
@@ -557,12 +535,7 @@ def get_offers_cmd(
 @click.option(
     "-m", "--fee", help="The fee to use when pushing the completed offer, in XCH", default="0", show_default=True
 )
-@click.option(
-    "--reuse",
-    help="Reuse existing address for the offer.",
-    is_flag=True,
-    default=False,
-)
+@tx_config_args
 def take_offer_cmd(
     path_or_hex: str,
     wallet_rpc_port: Optional[int],
@@ -570,12 +543,20 @@ def take_offer_cmd(
     examine_only: bool,
     fee: str,
     reuse: bool,
+    min_amount: Optional[str],
+    max_amount: Optional[str],
+    coins_to_exclude: List[str],
+    amounts_to_exclude: List[int],
 ) -> None:
     extra_params = {
         "file": path_or_hex,
         "examine_only": examine_only,
         "fee": fee,
         "reuse_puzhash": True if reuse else None,
+        "min_coin_amount": min_amount,
+        "max_coin_amount": max_amount,
+        "excluded_coin_ids": coins_to_exclude,
+        "excluded_amounts": amounts_to_exclude,
     }
     import asyncio
 
@@ -755,20 +736,31 @@ def did_get_details_cmd(wallet_rpc_port: Optional[int], fingerprint: int, coin_i
 @click.option("-f", "--fingerprint", help="Set the fingerprint to specify which key to use", type=int)
 @click.option("-i", "--id", help="Id of the DID wallet to use", type=int, required=True)
 @click.option("-d", "--metadata", help="The new whole metadata in json format", type=str, required=True)
-@click.option(
-    "--reuse",
-    help="Reuse existing address for the change.",
-    is_flag=True,
-    default=False,
-)
+@tx_config_args
 def did_update_metadata_cmd(
-    wallet_rpc_port: Optional[int], fingerprint: int, id: int, metadata: str, reuse: bool
+    wallet_rpc_port: Optional[int],
+    fingerprint: int,
+    id: int,
+    metadata: str,
+    reuse: bool,
+    min_amount: Optional[str],
+    max_amount: Optional[str],
+    coins_to_exclude: List[str],
+    amounts_to_exclude: List[int],
 ) -> None:
     import asyncio
 
     from .wallet_funcs import update_did_metadata
 
-    extra_params = {"did_wallet_id": id, "metadata": metadata, "reuse_puzhash": reuse}
+    extra_params = {
+        "did_wallet_id": id,
+        "metadata": metadata,
+        "reuse_puzhash": True if reuse else None,
+        "min_coin_amount": min_amount,
+        "max_coin_amount": max_amount,
+        "excluded_coin_ids": coins_to_exclude,
+        "excluded_amounts": amounts_to_exclude,
+    }
     asyncio.run(execute_with_wallet(wallet_rpc_port, fingerprint, extra_params, update_did_metadata))
 
 
@@ -901,12 +893,7 @@ def did_message_spend_cmd(
     show_default=True,
     callback=validate_fee,
 )
-@click.option(
-    "--reuse",
-    help="Reuse existing address for the change.",
-    is_flag=True,
-    default=False,
-)
+@tx_config_args
 def did_transfer_did(
     wallet_rpc_port: Optional[int],
     fingerprint: int,
@@ -915,6 +902,10 @@ def did_transfer_did(
     reset_recovery: bool,
     fee: str,
     reuse: bool,
+    min_amount: Optional[str],
+    max_amount: Optional[str],
+    coins_to_exclude: List[str],
+    amounts_to_exclude: List[int],
 ) -> None:
     import asyncio
 
@@ -926,6 +917,10 @@ def did_transfer_did(
         "target_address": target_address,
         "fee": fee,
         "reuse_puzhash": True if reuse else None,
+        "min_coin_amount": min_amount,
+        "max_coin_amount": max_amount,
+        "excluded_coin_ids": coins_to_exclude,
+        "excluded_amounts": amounts_to_exclude,
     }
     asyncio.run(execute_with_wallet(wallet_rpc_port, fingerprint, extra_params, transfer_did))
 
@@ -1015,12 +1010,7 @@ def nft_sign_message(wallet_rpc_port: Optional[int], fingerprint: int, nft_id: s
     default=0,
     show_default=True,
 )
-@click.option(
-    "--reuse",
-    help="Reuse existing address for the change.",
-    is_flag=True,
-    default=False,
-)
+@tx_config_args
 def nft_mint_cmd(
     wallet_rpc_port: Optional[int],
     fingerprint: int,
@@ -1039,6 +1029,10 @@ def nft_mint_cmd(
     fee: str,
     royalty_percentage_fraction: int,
     reuse: bool,
+    min_amount: Optional[str],
+    max_amount: Optional[str],
+    coins_to_exclude: List[str],
+    amounts_to_exclude: List[int],
 ) -> None:
     import asyncio
 
@@ -1070,6 +1064,10 @@ def nft_mint_cmd(
         "fee": fee,
         "royalty_percentage": royalty_percentage_fraction,
         "reuse_puzhash": True if reuse else None,
+        "min_coin_amount": min_amount,
+        "max_coin_amount": max_amount,
+        "excluded_coin_ids": coins_to_exclude,
+        "excluded_amounts": amounts_to_exclude,
     }
     asyncio.run(execute_with_wallet(wallet_rpc_port, fingerprint, extra_params, mint_nft))
 
@@ -1097,12 +1095,7 @@ def nft_mint_cmd(
     show_default=True,
     callback=validate_fee,
 )
-@click.option(
-    "--reuse",
-    help="Reuse existing address for the change.",
-    is_flag=True,
-    default=False,
-)
+@tx_config_args
 def nft_add_uri_cmd(
     wallet_rpc_port: Optional[int],
     fingerprint: int,
@@ -1113,6 +1106,10 @@ def nft_add_uri_cmd(
     license_uri: str,
     fee: str,
     reuse: bool,
+    min_amount: Optional[str],
+    max_amount: Optional[str],
+    coins_to_exclude: List[str],
+    amounts_to_exclude: List[int],
 ) -> None:
     import asyncio
 
@@ -1126,6 +1123,10 @@ def nft_add_uri_cmd(
         "license_uri": license_uri,
         "fee": fee,
         "reuse_puzhash": True if reuse else None,
+        "min_coin_amount": min_amount,
+        "max_coin_amount": max_amount,
+        "excluded_coin_ids": coins_to_exclude,
+        "excluded_amounts": amounts_to_exclude,
     }
     asyncio.run(execute_with_wallet(wallet_rpc_port, fingerprint, extra_params, add_uri_to_nft))
 
@@ -1151,12 +1152,7 @@ def nft_add_uri_cmd(
     show_default=True,
     callback=validate_fee,
 )
-@click.option(
-    "--reuse",
-    help="Reuse existing address for the change.",
-    is_flag=True,
-    default=False,
-)
+@tx_config_args
 def nft_transfer_cmd(
     wallet_rpc_port: Optional[int],
     fingerprint: int,
@@ -1165,6 +1161,10 @@ def nft_transfer_cmd(
     target_address: str,
     fee: str,
     reuse: bool,
+    min_amount: Optional[str],
+    max_amount: Optional[str],
+    coins_to_exclude: List[str],
+    amounts_to_exclude: List[int],
 ) -> None:
     import asyncio
 
@@ -1176,6 +1176,10 @@ def nft_transfer_cmd(
         "target_address": target_address,
         "fee": fee,
         "reuse_puzhash": True if reuse else None,
+        "min_coin_amount": min_amount,
+        "max_coin_amount": max_amount,
+        "excluded_coin_ids": coins_to_exclude,
+        "excluded_amounts": amounts_to_exclude,
     }
     asyncio.run(execute_with_wallet(wallet_rpc_port, fingerprint, extra_params, transfer_nft))
 
@@ -1220,12 +1224,7 @@ def nft_list_cmd(wallet_rpc_port: Optional[int], fingerprint: int, id: int) -> N
     show_default=True,
     callback=validate_fee,
 )
-@click.option(
-    "--reuse",
-    help="Reuse existing address for the change.",
-    is_flag=True,
-    default=False,
-)
+@tx_config_args
 def nft_set_did_cmd(
     wallet_rpc_port: Optional[int],
     fingerprint: int,
@@ -1234,6 +1233,10 @@ def nft_set_did_cmd(
     nft_coin_id: str,
     fee: str,
     reuse: bool,
+    min_amount: Optional[str],
+    max_amount: Optional[str],
+    coins_to_exclude: List[str],
+    amounts_to_exclude: List[int],
 ) -> None:
     import asyncio
 
@@ -1245,6 +1248,10 @@ def nft_set_did_cmd(
         "nft_coin_id": nft_coin_id,
         "fee": fee,
         "reuse_puzhash": True if reuse else None,
+        "min_coin_amount": min_amount,
+        "max_coin_amount": max_amount,
+        "excluded_coin_ids": coins_to_exclude,
+        "excluded_amounts": amounts_to_exclude,
     }
     asyncio.run(execute_with_wallet(wallet_rpc_port, fingerprint, extra_params, set_nft_did))
 
@@ -1481,12 +1488,7 @@ def _get_vcs(
 )
 @click.option("-p", "--new-proof-hash", help="The new proof hash to update the VC to", type=str, required=True)
 @click.option("-m", "--fee", help="Blockchain fee for update transaction, in XCH", type=str, required=False)
-@click.option(
-    "--reuse-puzhash/--generate-new-puzhash",
-    help="Send the VC back to the same puzzle hash it came from (ignored if --new-puzhash is specified)",
-    default=False,
-    show_default=True,
-)
+@tx_config_args
 def _spend_vc(
     wallet_rpc_port: Optional[int],
     fingerprint: int,
@@ -1494,7 +1496,11 @@ def _spend_vc(
     new_puzhash: Optional[str],
     new_proof_hash: str,
     fee: str,
-    reuse_puzhash: bool,
+    reuse: bool,
+    min_amount: Optional[str],
+    max_amount: Optional[str],
+    coins_to_exclude: List[str],
+    amounts_to_exclude: List[int],
 ) -> None:  # pragma: no cover
     import asyncio
 
@@ -1507,7 +1513,11 @@ def _spend_vc(
         "new_puzhash": new_puzhash,
         "new_proof_hash": new_proof_hash,
         "fee": fee,
-        "reuse_puzhash": reuse_puzhash,
+        "reuse_puzhash": True if reuse else None,
+        "min_coin_amount": min_amount,
+        "max_coin_amount": max_amount,
+        "excluded_coin_ids": coins_to_exclude,
+        "excluded_amounts": amounts_to_exclude,
     }
     asyncio.run(execute_with_wallet(wallet_rpc_port, fingerprint, extra_params, spend_vc))
 
@@ -1593,19 +1603,18 @@ def _get_proofs_for_root(
     required=False,
 )
 @click.option("-m", "--fee", help="Blockchain fee for revocation transaction, in XCH", type=str, required=False)
-@click.option(
-    "--reuse-puzhash/--generate-new-puzhash",
-    help="Send the VC back to the same puzzle hash it came from (ignored if --new-puzhash is specified)",
-    default=False,
-    show_default=True,
-)
+@tx_config_args
 def _revoke_vc(
     wallet_rpc_port: Optional[int],
     fingerprint: int,
     parent_coin_id: Optional[str],
     vc_id: Optional[str],
     fee: str,
-    reuse_puzhash: bool,
+    reuse: bool,
+    min_amount: Optional[str],
+    max_amount: Optional[str],
+    coins_to_exclude: List[str],
+    amounts_to_exclude: List[int],
 ) -> None:  # pragma: no cover
     import asyncio
 
@@ -1617,6 +1626,10 @@ def _revoke_vc(
         "parent_coin_id": parent_coin_id,
         "vc_id": vc_id,
         "fee": fee,
-        "reuse_puzhash": reuse_puzhash,
+        "reuse_puzhash": True if reuse else None,
+        "min_coin_amount": min_amount,
+        "max_coin_amount": max_amount,
+        "excluded_coin_ids": coins_to_exclude,
+        "excluded_amounts": amounts_to_exclude,
     }
     asyncio.run(execute_with_wallet(wallet_rpc_port, fingerprint, extra_params, revoke_vc))

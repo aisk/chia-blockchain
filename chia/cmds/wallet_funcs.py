@@ -10,7 +10,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 
-from chia.cmds.cmds_util import transaction_status_msg, transaction_submitted_msg
+from chia.cmds.cmds_util import CMDTXConfigLoader, transaction_status_msg, transaction_submitted_msg
 from chia.cmds.peer_funcs import print_connections
 from chia.cmds.units import units
 from chia.rpc.wallet_rpc_client import WalletRpcClient
@@ -245,12 +245,10 @@ async def send(args: dict, wallet_client: WalletRpcClient, fingerprint: int) -> 
     fee = Decimal(args["fee"])
     address = args["address"]
     override = args["override"]
-    min_coin_amount = Decimal(args["min_coin_amount"])
-    max_coin_amount = Decimal(args["max_coin_amount"])
-    excluded_coin_ids: List[str] = args["excluded_coin_ids"]
     memo = args["memo"]
-    reuse_puzhash = args["reuse_puzhash"]
     clawback_time_lock = args["clawback_time"]
+    config = load_config(DEFAULT_ROOT_PATH, "config.yaml")
+    tx_config = CMDTXConfigLoader.from_json_dict(args).to_tx_config(units["chia"], config, fingerprint)
     if memo is None:
         memos = None
     else:
@@ -277,20 +275,15 @@ async def send(args: dict, wallet_client: WalletRpcClient, fingerprint: int) -> 
 
     final_fee: uint64 = uint64(int(fee * units["chia"]))  # fees are always in XCH mojos
     final_amount: uint64 = uint64(int(amount * mojo_per_unit))
-    final_min_coin_amount: uint64 = uint64(int(min_coin_amount * mojo_per_unit))
-    final_max_coin_amount: uint64 = uint64(int(max_coin_amount * mojo_per_unit))
     if typ == WalletType.STANDARD_WALLET:
         print("Submitting transaction...")
         res = await wallet_client.send_transaction(
             wallet_id,
             final_amount,
             address,
+            tx_config,
             final_fee,
             memos,
-            final_min_coin_amount,
-            final_max_coin_amount,
-            excluded_coin_ids=excluded_coin_ids,
-            reuse_puzhash=reuse_puzhash,
             puzzle_decorator_override=[
                 {"decorator": PuzzleDecoratorType.CLAWBACK.name, "clawback_timelock": clawback_time_lock}
             ]
@@ -301,14 +294,11 @@ async def send(args: dict, wallet_client: WalletRpcClient, fingerprint: int) -> 
         print("Submitting transaction...")
         res = await wallet_client.cat_spend(
             wallet_id,
+            tx_config,
             final_amount,
             address,
             final_fee,
             memos,
-            final_min_coin_amount,
-            final_max_coin_amount,
-            excluded_coin_ids=excluded_coin_ids,
-            reuse_puzhash=reuse_puzhash,
         )
     else:
         print("Only standard wallet and CAT wallets are supported")
@@ -381,7 +371,6 @@ async def make_offer(args: dict, wallet_client: WalletRpcClient, fingerprint: in
     requests: List[str] = args["requests"]
     filepath: str = args["filepath"]
     fee: int = int(Decimal(args["fee"]) * units["chia"])
-    reuse_puzhash: Optional[bool] = args["reuse_puzhash"]
     config = load_config(DEFAULT_ROOT_PATH, "config.yaml")
 
     if [] in [offers, requests]:
@@ -522,7 +511,10 @@ async def make_offer(args: dict, wallet_client: WalletRpcClient, fingerprint: in
             else:
                 with open(pathlib.Path(filepath), "w") as file:
                     offer, trade_record = await wallet_client.create_offer_for_ids(
-                        offer_dict, driver_dict=driver_dict, fee=fee, reuse_puzhash=reuse_puzhash
+                        offer_dict,
+                        CMDTXConfigLoader.from_json_dict(args).to_tx_config(units["chia"], config, fingerprint),
+                        driver_dict=driver_dict,
+                        fee=fee,
                     )
                     if offer is not None:
                         file.write(offer.to_bech32())
@@ -751,7 +743,9 @@ async def take_offer(args: dict, wallet_client: WalletRpcClient, fingerprint: in
         print()
         confirmation = input("Would you like to take this offer? (y/n): ")
         if confirmation in ["y", "yes"]:
-            trade_record = await wallet_client.take_offer(offer, fee=fee)
+            trade_record = await wallet_client.take_offer(
+                offer, CMDTXConfigLoader.from_json_dict(args).to_tx_config(units["chia"], config, fingerprint), fee=fee
+            )
             print(f"Accepted offer with ID {trade_record.trade_id}")
             print(f"Use chia wallet get_offers --id {trade_record.trade_id} -f {fingerprint} to view its status")
 
@@ -1021,6 +1015,7 @@ async def mint_nft(args: Dict, wallet_client: WalletRpcClient, fingerprint: int)
             target_address,
             hash,
             uris,
+            CMDTXConfigLoader.from_json_dict(args).to_tx_config(units["chia"], config, fingerprint),
             metadata_hash,
             metadata_uris,
             license_hash,
@@ -1030,7 +1025,6 @@ async def mint_nft(args: Dict, wallet_client: WalletRpcClient, fingerprint: int)
             fee,
             royalty_percentage,
             did_id,
-            reuse_puzhash=args["reuse_puzhash"],
         )
         spend_bundle = response["spend_bundle"]
         print(f"NFT minted Successfully with spend bundle: {spend_bundle}")
@@ -1076,7 +1070,11 @@ async def transfer_nft(args: Dict, wallet_client: WalletRpcClient, fingerprint: 
         target_address = ensure_valid_address(args["target_address"], allowed_types={AddressType.XCH}, config=config)
         fee: int = int(Decimal(args["fee"]) * units["chia"])
         response = await wallet_client.transfer_nft(
-            wallet_id, nft_coin_id, target_address, fee, reuse_puzhash=args["reuse_puzhash"]
+            wallet_id,
+            nft_coin_id,
+            target_address,
+            fee,
+            CMDTXConfigLoader.from_json_dict(args).to_tx_config(units["chia"], config, fingerprint),
         )
         spend_bundle = response["spend_bundle"]
         print(f"NFT transferred successfully with spend bundle: {spend_bundle}")
@@ -1143,8 +1141,13 @@ async def set_nft_did(args: Dict, wallet_client: WalletRpcClient, fingerprint: i
     nft_coin_id = args["nft_coin_id"]
     fee: int = int(Decimal(args["fee"]) * units["chia"])
     try:
+        config = load_config(DEFAULT_ROOT_PATH, "config.yaml", SERVICE_NAME)
         response = await wallet_client.set_nft_did(
-            wallet_id, did_id, nft_coin_id, fee, reuse_puzhash=args["reuse_puzhash"]
+            wallet_id,
+            did_id,
+            nft_coin_id,
+            fee,
+            CMDTXConfigLoader.from_json_dict(args).to_tx_config(units["chia"], config, fingerprint),
         )
         spend_bundle = response["spend_bundle"]
         print(f"Transaction to set DID on NFT has been initiated with: {spend_bundle}")
@@ -1337,10 +1340,10 @@ async def spend_vc(args: Dict, wallet_client: WalletRpcClient, fingerprint: int)
     config = load_config(DEFAULT_ROOT_PATH, "config.yaml", SERVICE_NAME)
     txs = await wallet_client.vc_spend(
         bytes32.from_hexstr(args["vc_id"]),
+        CMDTXConfigLoader.from_json_dict(args).to_tx_config(units["chia"], config, fingerprint),
         new_puzhash=None if args["new_puzhash"] is None else bytes32.from_hexstr(args["new_puzhash"]),
         new_proof_hash=bytes32.from_hexstr(args["new_proof_hash"]),
         fee=uint64(0) if args["fee"] is None else uint64(int(Decimal(args["fee"]) * units["chia"])),
-        reuse_puzhash=args["reuse_puzhash"],
     )
 
     print("Proofs successfully updated!")
@@ -1393,8 +1396,8 @@ async def revoke_vc(args: Dict, wallet_client: WalletRpcClient, fingerprint: int
         parent_id = bytes32.from_hexstr(args["parent_coin_id"])
     txs = await wallet_client.vc_revoke(
         parent_id,
+        CMDTXConfigLoader.from_json_dict(args).to_tx_config(units["chia"], config, fingerprint),
         fee=uint64(0) if args["fee"] is None else uint64(int(Decimal(args["fee"]) * units["chia"])),
-        reuse_puzhash=args["reuse_puzhash"],
     )
 
     print("VC successfully revoked!")

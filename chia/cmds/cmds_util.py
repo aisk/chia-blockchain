@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import dataclasses
 import logging
 import traceback
 from contextlib import asynccontextmanager
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, Tuple, Type, TypeVar
 
+import click
 from aiohttp import ClientConnectorError
 
+from chia.consensus.default_constants import DEFAULT_CONSTANTS
 from chia.daemon.keychain_proxy import KeychainProxy, connect_to_keychain_and_validate
 from chia.rpc.data_layer_rpc_client import DataLayerRpcClient
 from chia.rpc.farmer_rpc_client import FarmerRpcClient
@@ -20,9 +24,11 @@ from chia.types.blockchain_format.sized_bytes import bytes32
 from chia.types.mempool_submission_status import MempoolSubmissionStatus
 from chia.util.config import load_config
 from chia.util.default_root import DEFAULT_ROOT_PATH
-from chia.util.ints import uint16
+from chia.util.ints import uint16, uint64
 from chia.util.keychain import KeyData
+from chia.util.streamable import Streamable, streamable
 from chia.wallet.transaction_record import TransactionRecord
+from chia.wallet.util.tx_config import CoinSelectionConfig, CoinSelectionConfigLoader, TXConfig, TXConfigLoader
 
 NODE_TYPES: Dict[str, Type[RpcClient]] = {
     "farmer": FarmerRpcClient,
@@ -222,3 +228,93 @@ async def execute_with_wallet(
             return
 
         await function(extra_params, wallet_client, new_fp)
+
+
+def coin_selection_args(func: Callable[..., None]) -> Callable[..., None]:
+    return click.option(
+        "-ma",
+        "--min-coin-amount",
+        "--min-amount",
+        help="Ignore coins worth less then this much XCH or CAT units",
+        type=str,
+        required=False,
+        default=None,
+    )(
+        click.option(
+            "-l",
+            "--max-coin-amount",
+            "--max-amount",
+            help="Ignore coins worth more then this much XCH or CAT units",
+            type=str,
+            required=False,
+            default=None,
+        )(
+            click.option(
+                "--exclude-coin",
+                "coins_to_exclude",
+                multiple=True,
+                help="Exclude this coin from being spent.",
+            )(
+                click.option(
+                    "--exclude-amount",
+                    "amounts_to_exclude",
+                    multiple=True,
+                    help="Exclude any coins with this XCH or CAT amount from being included.",
+                )(func)
+            )
+        )
+    )
+
+
+def tx_config_args(func: Callable[..., None]) -> Callable[..., None]:
+    return click.option(
+        "--reuse/--new-address",
+        "--reuse-puzhash/--generate-new-puzhash",
+        help="Reuse existing address for the change.",
+        is_flag=True,
+        default=False,
+    )(coin_selection_args(func))
+
+
+@streamable
+@dataclasses.dataclass(frozen=True)
+class CMDCoinSelectionConfigLoader(Streamable):
+    min_coin_amount: Optional[str] = None
+    max_coin_amount: Optional[str] = None
+    excluded_coin_amounts: Optional[List[str]] = None
+    excluded_coin_ids: Optional[List[bytes32]] = None
+
+    def to_coin_selection_config(self, mojo_per_unit: int) -> CoinSelectionConfig:
+        return CoinSelectionConfigLoader(
+            uint64(int(Decimal(self.min_coin_amount) * mojo_per_unit)) if self.min_coin_amount is not None else None,
+            uint64(int(Decimal(self.max_coin_amount) * mojo_per_unit)) if self.max_coin_amount is not None else None,
+            [uint64(int(Decimal(amount) * mojo_per_unit)) for amount in self.excluded_coin_amounts]
+            if self.excluded_coin_amounts is not None
+            else None,
+            self.excluded_coin_ids,
+        ).autofill(DEFAULT_CONSTANTS)
+
+
+@streamable
+@dataclasses.dataclass(frozen=True)
+class CMDTXConfigLoader(Streamable):
+    min_coin_amount: Optional[str] = None
+    max_coin_amount: Optional[str] = None
+    excluded_coin_amounts: Optional[List[str]] = None
+    excluded_coin_ids: Optional[List[bytes32]] = None
+    reuse_puzhash: Optional[bool] = None
+
+    def to_tx_config(self, mojo_per_unit: int, config: Dict[str, Any], fingerprint: int) -> TXConfig:
+        return TXConfigLoader.from_json_dict(
+            {
+                "reuse_puzhash": self.reuse_puzhash,
+                **CMDCoinSelectionConfigLoader(
+                    self.min_coin_amount,
+                    self.max_coin_amount,
+                    self.excluded_coin_amounts,
+                    self.excluded_coin_ids,
+                )
+                .to_coin_selection_config(mojo_per_unit)
+                .to_json_dict(),
+            }
+        ).autofill(config, fingerprint, DEFAULT_CONSTANTS)
