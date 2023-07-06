@@ -292,7 +292,7 @@ class CMDCoinSelectionConfigLoader(Streamable):
             if self.excluded_coin_amounts is not None
             else None,
             self.excluded_coin_ids,
-        ).autofill(DEFAULT_CONSTANTS)
+        ).autofill(constants=DEFAULT_CONSTANTS)
 
 
 @streamable
@@ -317,4 +317,4 @@ class CMDTXConfigLoader(Streamable):
                 .to_coin_selection_config(mojo_per_unit)
                 .to_json_dict(),
             }
-        ).autofill(config, fingerprint, DEFAULT_CONSTANTS)
+        ).autofill(constants=DEFAULT_CONSTANTS, config=config, logged_in_fingerprint=fingerprint)
