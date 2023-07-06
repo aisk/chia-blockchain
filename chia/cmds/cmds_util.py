@@ -297,24 +297,13 @@ class CMDCoinSelectionConfigLoader(Streamable):
 
 @streamable
 @dataclasses.dataclass(frozen=True)
-class CMDTXConfigLoader(Streamable):
-    min_coin_amount: Optional[str] = None
-    max_coin_amount: Optional[str] = None
-    excluded_coin_amounts: Optional[List[str]] = None
-    excluded_coin_ids: Optional[List[bytes32]] = None
+class CMDTXConfigLoader(CMDCoinSelectionConfigLoader):
     reuse_puzhash: Optional[bool] = None
 
     def to_tx_config(self, mojo_per_unit: int, config: Dict[str, Any], fingerprint: int) -> TXConfig:
         return TXConfigLoader.from_json_dict(
             {
                 "reuse_puzhash": self.reuse_puzhash,
-                **CMDCoinSelectionConfigLoader(
-                    self.min_coin_amount,
-                    self.max_coin_amount,
-                    self.excluded_coin_amounts,
-                    self.excluded_coin_ids,
-                )
-                .to_coin_selection_config(mojo_per_unit)
-                .to_json_dict(),
+                **self.to_coin_selection_config(mojo_per_unit).to_json_dict(),
             }
         ).autofill(constants=DEFAULT_CONSTANTS, config=config, logged_in_fingerprint=fingerprint)
